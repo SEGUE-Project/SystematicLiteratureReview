@@ -1,0 +1,28 @@
+﻿Relation,Group,Ref,Coeff,Standard Error,Significant,Standardized coeff,Standardized Error,R2,Adjusted R2,I,S,Controls
+I>S,A1,"Telles, 1995",0.01,0.01,No,0.238,,0.178,0.132,Gini,Entropy,0
+I>S,A1,"Telles, 1995",0.016,0.008,Yes,0.39,,0.551,0.498,Gini,Entropy,1
+I>S,A1,"Watson, 2009",0.126,0.016,Yes,,,0.91,,Family Centile Gap Index,log(80-20 Family income ratio),1
+I>S,A1,"Watson, 2009",0.12,0.021,Yes,,,0.93,,Family Centile Gap Index,log(80-20 Family income ratio),1
+I>S,A1,"Watson, 2009",0.108,0.02,Yes,,,0.93,,Family Centile Gap Index,log(80-20 Family income ratio),1
+I>S,A1,"Watson, 2009",,,Yes,2.717,0.492,,,Standardized Family Centile Gap Index,log(80-20 Family income ratio),1
+I>S,A1,"Watson, 2009",,,Yes,2.749,0.585,,,Standardized Neighbourhood Sorting Index,log(80-20 Family income ratio),1
+I>S,A1,"Watson, 2009",,,Yes,2.779,0.457,,,Standardized Herfindahl Index,log(80-20 Family income ratio),1
+I>S,A1,"Reardon & Bischoff, 2011",0.385,0.059,Yes,,,0.879,,Gini,ROITI,1
+I>S,A1,"Reardon & Bischoff, 2011",0.467,0.06,Yes,,,0.933,,Gini,ROITI,1
+I>S,A1,"Reardon & Bischoff, 2011",0.431,0.069,Yes,,,0.691,,Gini,ROITI,1
+I>S,A1,"Reardon & Bischoff, 2011",0.783,0.125,Yes,,,0.77,,Gini,ROITI,1
+I>S,A1,"Reardon & Bischoff, 2011",0.286,0.103,Yes,,,0.822,,Gini,ROITI,1
+I>S,A1,"Reardon & Bischoff, 2011",0.502,0.11,Yes,0.25,,0.883,,Gini,ROITI,1
+I>S,A1,"Owens, 2016",0.16,0.079,Yes,,,,,Gini,ROITI,0
+I>S,A1,"Owens, 2016",0.232,0.069,Yes,,,,,Gini,ROITI,1
+I>S,A1,"Hu & Liang, 2022",0.0619,0.0136,Yes,,,,,Delfta municipal inequality,Delta Neighbourhood Sorting Index,1
+I>S,A1,"Hu & Liang, 2022",0.0758,0.0131,Yes,,,,,Delfta municipal inequality,Delta Neighbourhood Sorting Index,1
+I>S,A1,"Hu & Liang, 2022",0.0726,0.0137,Yes,,,,,Delfta municipal inequality,Delta Neighbourhood Sorting Index,1
+I>S,A1,"Simpson et al., 2023",0.427,0.058,Yes,,,,,Gini,ROITI,1
+I>S,A1,"Simpson et al., 2023",0.763,0.157,Yes,,,,,Gini,Divergence index,1
+I>S,A1,"Simpson et al., 2023",,,Yes,0.566,0.076,,,Gini,ROITI,1
+I>S,A1,"Simpson et al., 2023",,,Yes,0.58,0.12,,,Gini,Divergence index,1
+I>S,A1,"Mutgan & Mijs, 2023",0.116,,Yes,,,,0.86,Gini,ROITI,1
+I>S,A1,"Mutgan & Mijs, 2023",0.226,,Yes,,,,0.861,Gini,ROITI,1
+I>S,A1,"Mutgan & Mijs, 2023",0.122,,Yes,,,,0.911,Gini,ROITI,1
+I>S,A1,"Mutgan & Mijs, 2023",0.148,,Yes,,,,0.914,Gini,ROITI,1

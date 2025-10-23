@@ -1,0 +1,1086 @@
+---
+title: 'Economic inequality and economic segregation: a systematic review of causal pathways'
+author: "Clémentine Cottineau-Mugadza"
+date: "24-10-2025"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+Companion notebook of the Social Forces 2025 article: "Economic inequality and economic segregation: a systematic review of causal pathways" by Clémentine Cottineau-Mugadza within the ERC project SEGUE.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(here)
+library(gsheet)
+  library(gridExtra)
+library(igraph)
+library(jsonlite)
+library(purrr)
+library(data.table)
+library(tidytext)
+library(textstem)
+library(tm)
+library(wordcloud)
+library(scales)
+  library(lubridate)
+library(ggVennDiagram)
+
+source("layout/igraphplot2.R")
+
+```
+
+## Screening 
+
+Graph to follow the evolution of manual screening (Appendix A)
+
+```{r graph_manual_screening}
+
+globalplot <- function(data){
+  categorised <- data %>% 
+    filter(CAT_title %in% LETTERS[1:8]) 
+  ncoded <- dim(categorised)[1]
+  
+  print(paste0("# of A: ", dim(filter(categorised,CAT_title == "A"))[1]))
+  print(paste0("# of Core: ", dim(filter(categorised,Core == 1))[1]))
+  p<- categorised %>%
+    ggplot(aes(CAT_title)) + 
+    geom_bar(fill = c("goldenrod1", "grey25","grey40","goldenrod3",
+                      "grey75","grey85","grey95","white")) +
+    ggtitle(paste0("n=",ncoded, " | ",round(ncoded/dim(wos_cat)[1] * 100,1), "%"))
+  
+  p
+  print(p)
+  ggsave(paste0("histevol_",ncoded,".png"))
+}
+evolhist <- function(data, binsize){
+  categorised <- data %>% 
+    filter(CAT_title %in% LETTERS[1:8]) 
+  ncoded <- dim(categorised)[1]
+  
+  categorised$n <- cut(as.numeric(rownames(categorised)),seq(0,ncoded, by=binsize))
+  
+  lastA <- sort(as.numeric(rownames(categorised[categorised$CAT_title == "A",])),decreasing = T)[1]
+  print(paste0("# since last A: ", ncoded - lastA))
+  
+  sumplot <- categorised %>%
+    mutate(Bin = gsub("\\(|\\]", "", n)) %>%
+    separate(Bin, sep = ",", into = c("lower", "upper")) %>%
+    mutate(across(lower:upper, as.numeric)) %>%
+    mutate(`Sample` = (upper + lower) / 2) 
+  
+  p<- ggplot(data = sumplot,
+         aes(x=Sample,fill=CAT_title)) + 
+    geom_histogram(position = position_fill(reverse = TRUE),
+                   stat="count", colour="white", width=binsize)+
+  scale_fill_manual(values = c("goldenrod1", "grey25","grey40","goldenrod3",
+                                "grey75","grey85","grey95","white")) +
+    labs(x = "Sample reviewed", y="Frequency") +
+    ggtitle(paste0("n=",ncoded, " | ",round(ncoded/dim(wos_cat)[1] * 100,1), "%"))
+  
+  
+   print(p)
+   print(table(sumplot$Sample, sumplot$CAT_title))
+   p
+   ggsave(paste0("histevol_",ncoded,".png"))
+}
+```
+
+Distribution of records by category (Appendix A)
+
+```{r manual_screening, warning=F, verbose=F}
+
+wos_cat<- read.csv2("data/wos_list2_CAT_CC.csv",sep=";")
+
+globalplot(wos_cat)
+evolhist(data=wos_cat, binsize = 500)
+
+```
+
+Random sampling of title examples for each category
+
+```{r sampling_screening}
+randomtitles <- function(data, n){
+  titletable <- data.frame()
+for(i in LETTERS[1:8]){
+  cattitles <- as_tibble(data) %>% 
+    filter(CAT_title == i) %>%
+    dplyr::select(.,Article.Title) 
+
+  titletable[1:n,i] <- sample(cattitles$Article.Title, n, replace = FALSE, prob = NULL)
+   }
+  titletable
+}
+titlextab <- randomtitles(wos_cat,10)
+ 
+head(titlextab)
+```
+
+AI-supported screening
+
+```{r ai_screening, warning=F, verbose=T}
+
+asreview1<- read_excel("data/asreview_dataset_all_economic-inequality-and-urban-economic-segregation-segue-1stRound.xlsx")
+
+conting <- table(asreview1$included, asreview1$CAT_title)
+conting
+prop.table(conting,2)
+
+summary(asreview1)
+
+```
+
+## Description of the corpus
+
+Aggregation
+
+```{r ai_screening_2, warning=F, verbose=T}
+
+asreviewWOS<- read_excel("data/asreview_dataset_all_assessing.xlsx") |>
+  filter(included == 1) |>
+  mutate(source = "WOS")
+
+colnames(asreviewWOS)
+fulltextlist <- asreviewWOS |>
+  mutate(cit = paste0(Authors, ", ", `Publication Year`, ", ",Title,", ",
+                      `Source Title`,", ", Volume, ", ", Issue, 
+                      ", ",`Start Page`, "-",`End Page`)) |>
+  select(cit)
+
+#write_excel_csv(fulltextlist, "data/citation_elligible.txt")
+
+
+asreviewWOS |> 
+  group_by(Elligibility, CorePaper) |>
+  summarise(n = n(),
+            minYear = min(`Publication Year`, na.rm=T),
+            maxYear = max(`Publication Year`, na.rm=T),
+            meanYear = mean(`Publication Year`, na.rm=T),
+            medYear = median(`Publication Year`, na.rm=T),
+            meanRefs = mean(`Cited Reference Count`),
+            meanCites = mean(`Times Cited, All Databases`),
+            maxRef = max(`Times Cited, All Databases`, na.rm=T),
+            
+  )
+
+```
+
+Merging sources (Figure 2B)
+
+```{r merging_sources, warning=F, verbose=T}
+
+expertSources<- read_excel("data/asreview_dataset_all_assessing_othersources.xlsx") |>
+  filter(included == 1) |>
+  mutate(source = substr(`unique ID`,1,5))
+
+colnames(expertSources) <- colnames(asreviewWOS)
+
+asreview2 <- rbind(asreviewWOS, expertSources)
+
+asreview2$Language <- as.factor(asreview2$Language)
+summary(asreview2)
+
+asreview2 |> 
+  group_by(Elligibility, CorePaper) |>
+  summarise(n = n(),
+            minYear = min(`Publication Year`, na.rm=T),
+            maxYear = max(`Publication Year`, na.rm=T),
+            meanYear = mean(`Publication Year`, na.rm=T),
+            medYear = median(`Publication Year`, na.rm=T),
+            meanRefs = mean(`Cited Reference Count`),
+            meanCites = mean(`Times Cited, All Databases`)
+            )
+```
+
+### Creating reference lists 
+
+Appendix B & C
+
+```{r reference_lists, warning=F, verbose=T}
+
+eligiblelist <- asreview2 |>
+  filter(Elligibility == 1) |>
+  mutate(cit = paste0(Authors, ", ", `Publication Year`, ", ",Title,", ",
+                      `Source Title`,", ", Volume, ", ", Issue, 
+                      ", ",`Start Page`, "-",`End Page`)) |>
+  select(cit)
+
+head(eligiblelist)
+
+#write_excel_csv(eligiblelist, "data/citation_scoping.txt")
+
+corelist <- asreview2 |>
+  filter(CorePaper == 1) |>
+  mutate(cit = paste0(Authors, ", ", `Publication Year`, ", ",Title,", ",
+                      `Source Title`,", ", Volume, ", ", Issue, 
+                      ", ",`Start Page`, "-",`End Page`)) |>
+  select(cit)
+
+head(corelist)
+
+#write_excel_csv(corelist, "data/citation_core.txt")
+```
+
+## Analysing eligible articles 
+
+Theoretical framework of causal pathways 
+
+```{r causal_pathways, warning=F}
+
+nodes <- data.frame(id = LETTERS[1:7],
+                    concepts = c("Economic inequality","Economic segregation",
+                                 "Labour ineq.",
+                                 "School ineq.","Housing ineq.",
+                                 "Other ineq. (health, crime...)",
+                                 "Other"),
+                    type = c("Main concept","Main concept",
+                             "Mediator", "Mediator",
+                             "Mediator","Mediator",
+                             "Other"),
+                    "lon" = c(1, 3, 2, 2, 2, 2, 2),
+                    "lat" = c(2.5, 2.5, 4.5, 4, 3.5, 2, 1.5))
+
+
+links <- data.frame( from = c("A","C", "D", "E", "F",
+                              "G", "B", "C","D", "E",
+                              "F", "G", "A", "A", "A",
+                              "A", "A", "B", "B", "B",
+                              "B", "B", "D", "C", "D",
+                              "E", "E", "C", "G", "C",
+                              "G", "G", "C", "D", "E",
+                              "F", "G"),
+                     to = c("B", "B","B", "B", "B",
+                            "B", "A", "A", "A", "A",
+                            "A", "A", "C", "D", "E",
+                            "F", "G", "C", "D", "E",
+                            "F", "G", "C", "D", "E",
+                            "D", "C", "E", "C", "G",
+                            "E", "F", "G", "G", "G",
+                            "G", "D"),
+                     id = 1:37,
+                     type = c("Direct", "Mediated", "Mediated","Mediated","Mediated",
+                              "External", "Direct", "Mediated", "Mediated","Mediated",
+                              "Mediated", "External", "On mediators", "On mediators", "On mediators",
+                              "On mediators", "External", "On mediators", "On mediators", "On mediators",
+                              "On mediators", "External", "Inter-Mediator", "Inter-Mediator", "Inter-Mediator",
+                              "Inter-Mediator", "Inter-Mediator", "Inter-Mediator", "External", "External",
+                              "External", "External","External", "External","External",
+                              "External", "External"))
+net <- graph_from_data_frame(d=links, vertices=nodes, directed=T)
+
+ecolors <- c("mediumvioletred", "gray75", "gray45", "cornflowerblue", "mediumaquamarine")
+alphaecolors <- alpha(ecolors, 0.5)
+esizes <- c(5, 1, 2, 4, 3)
+E(net)$color <- alphaecolors[as.factor(E(net)$type)]
+E(net)$width <- esizes[as.factor(E(net)$type)]
+# E(net)$label <- E(net)$id
+# E(net)$label.color <- ecolors[as.factor(E(net)$type)]
+E(net)$weight <- as.numeric(esizes[as.factor(E(net)$type)]) * 5
+
+
+vcolors <- c("tomato", "orange", "black")
+vsizes <- c(4, 2, 1)
+V(net)$label <- V(net)$concepts
+V(net)$color <- vcolors[as.factor(V(net)$type)]
+V(net)$size <- vsizes[as.factor(V(net)$type)]*5
+V(net)$label.cex <- sqrt(vsizes[as.factor(V(net)$type)]) / 2
+V(net)$label.degree <- c(pi/2,pi/2, -1.5, -1.5, pi/2, pi/2, pi/2)
+
+
+V(net)$frame.color <- "white"
+
+
+environment(plot.igraph2) <- asNamespace('igraph')
+environment(igraph.Arrows2) <- asNamespace('igraph')
+
+
+l <- layout.norm(as.matrix(nodes[,c("lon", "lat")]))
+plot.igraph2(net, edge.arrow.size=.4, edge.curved=0.55, layout=l,
+             vertex.label.dist=2,
+             vertex.label.font=2, vertex.label.color="black",
+             #edge.label.color="gray20",
+             edge.label.cex=0.75,
+             edge.label.font=2,
+              edge.arrow.size=2* (as.numeric(E(net)$weight)/
+                                   as.numeric(max(E(net)$weight))/2),
+             edge.arrow.width=2* (as.numeric(E(net)$weight)/
+                                    max(as.numeric(E(net)$weight))),
+             main = "Direct, indirect and retro effects \n of economic inequality on economic segregation")
+
+legend(x=-1.5, y=-1.1, levels(as.factor(nodes$type)), pch=21,
+       col="white", pt.bg=vcolors, pt.cex=2, cex=.8, bty="n", ncol=1, title="Type of concept")
+legend(x=0.5, y=-1.1, levels(as.factor(links$type)), pch=21,
+       col="white", pt.bg=alphaecolors, pt.cex=2, cex=.8, bty="n", ncol=1, title="Type of relation")
+
+
+```
+Coding framework for causal pathways analysis (Appendix D)
+
+```{r coding_scheme, warning=F, verbose=F}
+
+nodes <- data.frame(id = LETTERS[1:7],
+                    concepts = c("Economic inequality","Economic segregation",
+                                 "Labour ineq.",
+                                 "School ineq.","Housing ineq.",
+                                 "Other ineq. (health, crime...)",
+                                 "Other"),
+                    type = c("Main concept","Main concept",
+                             "Mediator", "Mediator",
+                             "Mediator","Mediator",
+                             "Other"),
+                    "lon" = c(1, 3, 2, 2, 2, 2, 2),
+                    "lat" = c(2.5, 2.5, 4.5, 4, 3.5, 2, 1.5))
+
+
+links <- data.frame( from = c("A","C", "D", "E", "F",
+                              "G", "B", "C","D", "E",
+                              "F", "G", "A", "A", "A",
+                              "A", "A", "B", "B", "B",
+                              "B", "B", "D", "C", "D",
+                              "E", "E", "C", "G", "C",
+                              "G", "G", "C", "D", "E",
+                              "F", "G"),
+                     to = c("B", "B","B", "B", "B",
+                            "B", "A", "A", "A", "A",
+                            "A", "A", "C", "D", "E",
+                            "F", "G", "C", "D", "E",
+                            "F", "G", "C", "D", "E",
+                            "D", "C", "E", "C", "G",
+                            "E", "F", "G", "G", "G",
+                            "G", "D"),
+                     id = 1:37,
+                     type = c("Direct", "Mediated", "Mediated","Mediated","Mediated",
+                              "External", "Direct", "Mediated", "Mediated","Mediated",
+                              "Mediated", "External", "On mediators", "On mediators", "On mediators",
+                              "On mediators", "External", "On mediators", "On mediators", "On mediators",
+                              "On mediators", "External", "Inter-Mediator", "Inter-Mediator", "Inter-Mediator",
+                              "Inter-Mediator", "Inter-Mediator", "Inter-Mediator", "External", "External",
+                              "External", "External","External", "External","External",
+                              "External", "External"))
+net <- graph_from_data_frame(d=links, vertices=nodes, directed=T)
+
+ecolors <- c("mediumvioletred", "gray75", "gray45", "cornflowerblue", "mediumaquamarine")
+alphaecolors <- alpha(ecolors, 0.5)
+esizes <- c(5, 1, 2, 4, 3)
+E(net)$color <- alphaecolors[as.factor(E(net)$type)]
+E(net)$width <- esizes[as.factor(E(net)$type)]
+E(net)$label <- E(net)$id
+E(net)$label.color <- ecolors[as.factor(E(net)$type)]
+E(net)$weight <- as.numeric(esizes[as.factor(E(net)$type)]) * 5
+
+
+vcolors <- c("tomato", "orange", "black")
+vsizes <- c(4, 2, 1)
+V(net)$label <- V(net)$concepts
+V(net)$color <- vcolors[as.factor(V(net)$type)]
+V(net)$size <- vsizes[as.factor(V(net)$type)]*5
+V(net)$label.cex <- sqrt(vsizes[as.factor(V(net)$type)]) / 2
+V(net)$label.degree <- c(pi/2,pi/2, -1.5, -1.5, pi/2, pi/2, pi/2)
+
+
+V(net)$frame.color <- "white"
+
+
+environment(plot.igraph2) <- asNamespace('igraph')
+environment(igraph.Arrows2) <- asNamespace('igraph')
+
+
+l <- layout.norm(as.matrix(nodes[,c("lon", "lat")]))
+plot.igraph2(net, edge.arrow.size=.4, edge.curved=0.55, layout=l,
+             vertex.label.dist=2,
+             vertex.label.font=2, vertex.label.color="black",
+             #edge.label.color="gray20",
+             edge.label.cex=0.75,
+             edge.label.font=2,
+             edge.arrow.size=2* (as.numeric(E(net)$weight)/
+                                   as.numeric(max(E(net)$weight))/2),
+             edge.arrow.width=2* (as.numeric(E(net)$weight)/
+                                    max(as.numeric(E(net)$weight))),
+             main = "Direct, indirect and retro effects \n of economic inequality on economic segregation")
+
+legend(x=-1.5, y=-1.1, levels(as.factor(nodes$type)), pch=21,
+       col="white", pt.bg=vcolors, pt.cex=2, cex=.8, bty="n", ncol=1, title="Type of concept")
+legend(x=0.5, y=-1.1, levels(as.factor(links$type)), pch=21,
+       col="white", pt.bg=alphaecolors, pt.cex=2, cex=.8, bty="n", ncol=1, title="Type of relation")
+
+
+```
+
+Mergin coding results with bibliometric information
+
+```{r, warning=F, verbose=F}
+
+form <- gsheet2tbl('https: //docs.google.com/spreadsheets/d/1iHgL9ziZ2IGhYXUqNmphgbUkfjfzTH4RVpBgq80A2Wc/edit?usp=sharing')
+
+
+fdata <- left_join(form, asreview2, by=c("Article-ID"="UT (Unique WOS ID)")) %>%
+  mutate(path = strsplit(gsub(";","",`Causal Path`), " "))
+
+fdata |> 
+  group_by(Elligibility, CorePaper) |>
+  summarise(n = n(),
+            minYear = min(`Publication Year`, na.rm=T),
+            maxYear = max(`Publication Year`, na.rm=T),
+            meanYear = mean(`Publication Year`, na.rm=T),
+            medYear = median(`Publication Year`, na.rm=T),
+            meanRefs = mean(`Cited Reference Count`),
+            meanCites = mean(`Times Cited, All Databases`)
+  )
+
+fdata$date <- as.Date(fdata$Horodateur, format =  "%d/%m/%Y")
+fdata$num <- as.numeric(fdata$date)
+bin <- 30
+ggplot(fdata, aes(date, ..count..)) + 
+  geom_histogram(binwidth = bin, colour="black") +
+  scale_x_date(breaks = seq(min(fdata$date), # change -20 term to taste
+                            max(fdata$date)+1,
+                            bin*2),
+               labels = date_format("%b-%y"),
+               limits = c(as.Date("2023-03-01"),
+                          as.Date("2024-09-01"))) +
+  ylab("Number of articles coded per month") + xlab("")
+
+
+```
+
+## Analysis
+
+Language & case study (figure 3A)
+
+```{r, verbose=F, warning=F}
+ summary(fdata$Language)
+
+table(fdata$CorePaper, fdata$`if Location(s) where (Zone)?`)
+
+```
+
+
+Disciplinary partition (Appendix E)
+
+```{r, warning=F, verbose=F}
+  fdata$publication = as_factor(fdata$`Source Title`)
+ 
+discipline <- read_csv("data/journal_lookup.csv")
+  
+  fdata <- left_join(fdata, discipline, by = c("publication" = "journal"))
+  
+  
+  
+  fdata$discipline <- factor(fdata$discipline, levels = 
+                               c("SOC" , "ECON", "URBREG",
+                                 "GEOG", "DEMO", "CRIMEPID",
+                                 "PHYMAT", "OTHER"))
+  
+  summary(fdata$discipline)
+  
+  fdata$year <- as.numeric(fdata$`Publication Year`)
+```
+
+Distribution by disciplines (Figure 2A)
+
+```{r, warning=F, verbose=F}
+  ggplot(fdata, aes(x = year, fill = discipline)) +
+    geom_histogram()  +
+    ylab("Number of eligible article published")
+
+```
+
+
+Conceptual understanding
+
+```{r}
+fdata$SegAsResidential <- as.factor(ifelse(
+  grepl("Residential segregation", form$`Concept for "segregation"`, fixed = TRUE),1,0
+))
+fdata$SegAsConcentration <- as.factor(ifelse(
+  grepl("Concentration", 
+        form$`Concept for "segregation"`, fixed = TRUE) ,1,0
+))
+
+fdata$SegAsOther <- as.factor(ifelse(
+  fdata$SegAsResidential == 0 & 
+    fdata$SegAsConcentration == 0,
+  1,0
+))
+
+summary(fdata$SegAsResidential)
+summary(fdata$SegAsConcentration)
+  summary(fdata$SegAsOther)
+  
+  fdata$IneqAsDist <- as.factor(ifelse(
+    grepl("Skewed distribution", 
+          form$`Concept for "inequality"`, fixed = TRUE),1,0
+  ))
+  fdata$IneqAsConcentration <- as.factor(ifelse(
+    grepl("Economic concentration (top income shares)", 
+          form$`Concept for "inequality"`, fixed = TRUE) ,1,0
+  ))
+  
+  fdata$IneqAsOther <- as.factor(ifelse(
+    fdata$IneqAsDist == 0 & 
+      fdata$IneqAsConcentration == 0,
+    1,0
+  ))
+  
+  summary(fdata$IneqAsDist)
+  summary(fdata$IneqAsConcentration)
+  summary(fdata$IneqAsOther)
+
+  fdata$EconAsIncome <- as.factor(ifelse(
+    grepl("Income", 
+          form$`Concept for "Economic"`, fixed = TRUE) |
+      grepl("income", 
+            form$`Concept for "Economic"`, fixed = TRUE),1,0
+  ))
+  fdata$EconAsWealth <- as.factor(ifelse(
+    grepl("Wealth", 
+          form$`Concept for "Economic"`, fixed = TRUE) ,1,0
+  ))
+  
+  fdata$EconAsOther <- as.factor(ifelse(
+    (grepl("Wealth, ", 
+          form$`Concept for "Economic"`, fixed = TRUE) &
+       fdata$EconAsIncome == 0 ) | 
+      (grepl("Income, ", 
+             form$`Concept for "Economic"`, fixed = TRUE) &
+         fdata$EconAsWealth == 0 ) | 
+      (grepl("Wealth, ", 
+             form$`Concept for "Economic"`, fixed = TRUE) &
+         grepl("Income, ", 
+               form$`Concept for "Economic"`, fixed = TRUE)) |
+      (fdata$EconAsWealth == 0 &
+         fdata$EconAsIncome == 0 )  ,
+    1,0
+  ))
+  
+  summary(fdata$EconAsIncome)
+  summary(fdata$EconAsWealth)
+  summary(fdata$EconAsOther)
+  
+```
+
+Concept distribution 
+
+```{r, warning=F, verbose=F}
+fdata$ID <- fdata$`Article-ID`
+   segconcept <- fdata[,c("ID","SegAsResidential", "SegAsConcentration", "SegAsOther")]
+  xseg <- list(
+    Residential = unlist(as.list(segconcept[segconcept$SegAsResidential == 1,"ID"])), 
+    Concentration = unlist(as.list(segconcept[segconcept$SegAsConcentration == 1,"ID"])), 
+    Other = unlist(as.list(segconcept[segconcept$SegAsOther == 1,"ID"])))
+  ggVennDiagram(xseg, label_alpha = 0.2, edge_lty = 0, set_size = 2.7) +
+    ggplot2::scale_fill_gradient(low="white",high = "aquamarine3")+
+    ggplot2::ggtitle("How is segregation conceptualized?", 
+                     subtitle = "Eligible papers: n=80") +
+    ggplot2::theme(legend.position='right', 
+                   legend.justification='right',
+                   legend.direction='vertical')
+  
+  ineqconcept <- fdata[,c("ID","IneqAsDist", "IneqAsConcentration", "IneqAsOther")]
+  xineq <- list(
+    Distribution = unlist(as.list(ineqconcept[ineqconcept$IneqAsDist == 1,"ID"])), 
+    Concentration = unlist(as.list(ineqconcept[ineqconcept$IneqAsConcentration == 1,"ID"])), 
+    Other = unlist(as.list(ineqconcept[ineqconcept$IneqAsOther == 1,"ID"])))
+  ggVennDiagram(xineq, label_alpha = 0.2, edge_lty = 0, set_size = 2.7) +
+    ggplot2::scale_fill_gradient(low="white",high = "#FFA500")+
+    ggplot2::ggtitle("How is inequality conceptualized?", 
+                     subtitle = "Eligible papers: n=80") +
+    ggplot2::theme(legend.position='right', 
+                   legend.justification='right',
+                   legend.direction='vertical')
+  
+  econconcept <- fdata[,c("ID","EconAsIncome", "EconAsWealth", "EconAsOther")]
+  xecon <- list(
+    Income = unlist(as.list(econconcept[econconcept$EconAsIncome == 1,"ID"])), 
+    Wealth = unlist(as.list(econconcept[econconcept$EconAsWealth == 1,"ID"])), 
+    Other = unlist(as.list(econconcept[econconcept$EconAsOther == 1,"ID"])))
+  ggVennDiagram(xecon, label_alpha = 0.2, edge_lty = 0, set_size = 2.7) +
+    ggplot2::scale_fill_gradient(low="white",high = "#C77398")+
+    ggplot2::ggtitle("How is the economic resource conceptualized?", 
+                     subtitle = "Eligible papers: n=80") +
+    ggplot2::theme(legend.position='right', 
+                   legend.justification='right',
+                   legend.direction='vertical')
+  
+```
+
+
+Query about papers using wealth as economic concept:
+
+```{r, warning=F, verbose=F}
+  fdata |>
+    filter(EconAsWealth == 1) |>
+    select(Authors, year, `Concept for "Economic"`,CorePaper, `if Location(s) where (Zone)?`,
+           `Methods used for assessing effects and relation between segregation and inequality`)
+  
+```
+
+Gini distribution (figure 3B)
+
+```{r, warning=F, verbose=F}
+
+averageGini <- read_csv("data/country_Gini.csv")
+worldGini <- read_csv("data/country_Gini_context.csv")
+
+analysisPerGiniLevel <- left_join(fdata, averageGini, by = 
+                                    c(`if Location(s) where (Zone)?` = "Zone")
+                                  ) 
+
+ggplot() +
+  geom_density(data = worldGini, aes(x=LatestGini), 
+               fill = alpha("#FF8095", 0.6),
+               color=NA) +
+  geom_density(data = analysisPerGiniLevel, aes(x=LatestAverageGini),
+               fill = alpha("#FFAA00", 0.6), 
+               color=NA) +
+  xlab("Latest value of national Gini") +
+  ylab("Density distribution") +
+  ggtitle("Eligible articles | n = 80") +
+  scale_y_continuous(limits = c(0,0.115)) +
+   ggplot2::annotate("text", x=50, y= 0.023, label="World", color=alpha("#FF8095", 0.9)) +
+  ggplot2::annotate("text", x=50, y= 0.098, label="Countries studied", color=alpha("#FFAA00", 0.9)) +
+   theme_light()
+
+ggplot() +
+  geom_density(data = worldGini, aes(x=LatestGini), 
+               fill = alpha("#FF8095", 0.6),
+               color=NA) +
+  geom_density(data = analysisPerGiniLevel[analysisPerGiniLevel$CorePaper == 1,], aes(x=LatestAverageGini),
+               fill = alpha("#FFAA00", 0.6), 
+               color=NA) +
+  xlab("Latest value of national Gini") +
+  ylab("Density distribution") +
+  scale_y_continuous(limits = c(0,0.115)) +
+  ggtitle("Core articles | n = 32") +
+  ggplot2::annotate("text", x=50, y= 0.023, label="World", 
+                    color=alpha("#FF8095", 0.9)) +
+  ggplot2::annotate("text", x=50, y= 0.068, label="Countries studied", 
+                    color=alpha("#FFAA00", 0.9)) +
+  theme_light()
+
+
+```
+
+
+Methodology & study design
+  
+```{r, warning=F, verbose=F}
+  fdata$AnalyticalModel <- as.factor(ifelse(
+    grepl("analytical model", 
+          form$`Methods used for assessing effects and relation between segregation and inequality`, 
+          fixed = TRUE) | 
+      grepl("Simulation", form$`Methods used for assessing effects and relation between segregation and inequality`, 
+       fixed = TRUE),1,0
+  ))
+  fdata$DiscourseAnalysis <-as.factor(ifelse(
+    grepl("Discourse analysis", 
+          form$`Methods used for assessing effects and relation between segregation and inequality`, 
+          fixed = TRUE),1,0
+  ))
+
+  fdata$HistoricalAnalysis <-as.factor(ifelse(
+    grepl("Historical analysis", 
+          form$`Methods used for assessing effects and relation between segregation and inequality`, 
+          fixed = TRUE),1,0
+  ))
+  
+  fdata$IndexAnalysis <-as.factor(ifelse(
+    grepl("Index comparison", 
+          form$`Methods used for assessing effects and relation between segregation and inequality`, 
+          fixed = TRUE),1,0
+  ))
+  
+  fdata$MapComparison <-as.factor(ifelse(
+    grepl("Map comparison", 
+          form$`Methods used for assessing effects and relation between segregation and inequality`, 
+          fixed = TRUE),1,0
+  ))
+  
+  fdata$Simulation <-as.factor(ifelse(
+    grepl("Simulation", 
+          form$`Methods used for assessing effects and relation between segregation and inequality`, 
+          fixed = TRUE),1,0
+  ))
+  
+  fdata$Statistical <-as.factor(ifelse(
+    grepl("Statistical regression/correlation", 
+          form$`Methods used for assessing effects and relation between segregation and inequality`, 
+          fixed = TRUE),1,0
+  ))
+  
+  methodo <- fdata |>
+    select(Authors, year, CorePaper, `if Location(s) where (Zone)?`, discipline,
+           HistoricalAnalysis, AnalyticalModel, DiscourseAnalysis, IndexAnalysis, 
+           MapComparison, Statistical, 
+           `Type of analysis`, `Scale of analysis`, `Unit of analysis`, `Time frame of study`)
+  
+  summary(methodo)
+```
+
+Methodological distribution (Figure 4)
+  
+```{r, warning=F, verbose=F}
+
+  p1 <- methodo |>
+  ggplot(aes(x=Statistical)) +
+    geom_bar(fill="blue") +
+    facet_wrap(~discipline, ncol = 4) +
+    xlab("Use of statistical regression models") +
+    ylab("Number of articles") +
+    theme(axis.title.x = element_text(colour = "blue")) +
+    scale_y_continuous(limits = c(0,  17)) +
+     scale_x_discrete(labels = NULL,
+    limits = c(1))
+  
+  p2 <- methodo |>
+  ggplot(aes(x=AnalyticalModel)) +
+    geom_bar(fill="orange") +
+    facet_wrap(~discipline, ncol = 4) +
+    xlab("Use of analytical models and simulation") +
+    ylab("Number of articles") +
+    theme(axis.title.x = element_text(colour = "orange"))+
+    scale_y_continuous(limits = c(0, 17))+
+    scale_x_discrete(labels = NULL,
+    limits = c(1))
+  
+  p3 <- methodo |>
+  ggplot(aes(x=IndexAnalysis)) +
+    geom_bar(fill="forestgreen") +
+    facet_wrap(~discipline, ncol = 4) +
+    xlab("Use of index comparison") +
+    ylab("Number of articles") +
+    theme(axis.title.x = element_text(colour = "forestgreen"))+
+    scale_y_continuous(limits = c(0, 17))+
+     scale_x_discrete(labels = NULL,
+    limits = c(1))
+  
+  p4 <-  methodo |>
+  ggplot(aes(x=HistoricalAnalysis)) +
+    geom_bar(fill="firebrick3") +
+    facet_wrap(~discipline, ncol = 4) +
+    xlab("Use of historical analysis") +
+    ylab("Number of articles") +
+    theme(axis.title.x = element_text(colour = "firebrick3"))+
+    scale_y_continuous(limits = c(0, 17))+
+    scale_x_discrete(labels = NULL,
+    limits = c(1))
+  
+  p5 <-methodo |>
+  ggplot(aes(x=MapComparison)) +
+    geom_bar(fill="aquamarine3") +
+    facet_wrap(~discipline, ncol = 4) +
+    xlab("Use of map comparisons") +
+    ylab("Number of articles") +
+    theme(axis.title.x = element_text(colour = "aquamarine3"))+
+    scale_y_continuous(limits = c(0,17))+
+     scale_x_discrete(labels = NULL,
+    limits = c(1))
+  
+  p6 <- methodo |>
+  ggplot(aes(x=DiscourseAnalysis)) +
+    geom_bar(fill="#C77398") +
+   facet_wrap(~discipline, ncol = 4) +
+     xlab("Use of discourse analysis") +
+    ylab("Number of articles") +
+    theme(axis.title.x = element_text(colour = "#C77398"))+
+    scale_y_continuous(limits = c(0, 17))+
+    scale_x_discrete(labels = NULL,
+    limits = c(1))
+  
+  grid.arrange(p1, p2, p3,
+               p4, p5, p6, ncol=3)
+```                         
+  
+  
+Time frame of studies (Appendix G)
+
+```{r, warning=F, verbose=F}
+longitudinal <- fdata |>
+    filter(grepl(":", 
+          form$`Time frame of study`, 
+          fixed = TRUE) | 
+            grepl("-", 
+                  form$`Time frame of study`, 
+                  fixed = TRUE)) |>
+    select(Authors, year, `Time frame of study`) # |>
+  
+  data <- read_csv("data/longitudinal_studies_hand.csv") |>
+    mutate(start = ymd(paste0(start,"01-01")), 
+           end = ymd(paste0(end,"01-01"))) |>
+    arrange(desc(end)) |>
+    pivot_longer(cols=c("start", "end"),
+                 names_to="date_type",
+                 values_to = "date") 
+
+```
+
+
+Distribution of coefficient values (Figure 6)
+
+```{r, warning=F, verbose=F}
+  ggplot(data, aes(x=fct_inorder(reference), y=date)) +
+    geom_line(size=0.5, col="blue") + 
+    ylab("") + xlab("") +
+    coord_flip() +
+    theme_minimal() 
+
+```
+
+Units and Scales
+
+```{r, warning=F, verbose=F}
+
+  fdata$nationalScale <- as.factor(ifelse(
+    grepl("National", 
+          form$`Scale of analysis`, 
+          fixed = TRUE) ,1,0
+  ))
+  fdata$metroScale <- as.factor(ifelse(
+    grepl("Urban (metropolitan)", 
+          form$`Scale of analysis`, 
+          fixed = TRUE) ,1,0
+  ))
+  table(fdata$nationalScale, fdata$discipline)
+  table(fdata$metroScale, fdata$discipline)
+  
+  fdata$indUnit <- as.factor(ifelse(
+    grepl("Individual", 
+          form$`Unit of analysis`, 
+          fixed = TRUE) ,1,0
+  ))
+  fdata$houseUnit <- as.factor(ifelse(
+    grepl("Household", 
+          form$`Unit of analysis`, 
+          fixed = TRUE) ,1,0
+  ))
+  
+  fdata$neighUnit <- as.factor(ifelse(
+    grepl("Neighbourhood", 
+          form$`Unit of analysis`, 
+          fixed = TRUE) ,1,0
+  ))
+  
+  summary(fdata$indUnit)
+  summary(fdata$houseUnit)
+  summary(fdata$neighUnit)
+```
+
+
+## SLR Results
+
+Causal pathways
+
+```{r, warning=F, verbose=F}
+# Causal Paths
+  
+  fishgraph <- function(data, nodes, links, ID="all", legend=T){
+    if(ID == "all"){
+      fdata <- data %>%
+        filter(CorePaper == 0) 
+      pastetext <- paste0("Distribution of effects in non-core articles | n = ", dim(fdata[!is.na(fdata$path),])[1])
+    } else {
+      if(ID == "core"){
+        fdata <- data %>%
+          filter(CorePaper == 1) 
+        pastetext <- paste0("Distribution of effects in core articles | n = ", dim(fdata[!is.na(fdata$path),])[1])
+        
+      } else {
+        fdata <- data %>%
+          filter(`Article-ID` == ID)
+        dim(fdata[!is.na(fdata$path),])[1]
+        pastetext <- paste0("Article = ", fdata$Authors,
+                            ", ", fdata$`Publication Year`)
+      }}
+    
+    dt_list <- map(fdata$path, as.data.table)
+    dt <- as.data.frame(rbindlist(dt_list, fill = TRUE, idcol = T))
+    colnames(dt) <- c("ID", "path")
+    dt$path <- as.numeric(dt$path)
+    
+    freq <- dt %>%
+      group_by(path) %>%
+      count(.)
+    # 
+    # freq <- freq[freq$path %in% as.factor(1:37),]
+    # freq$f <- freq$n / sum(freq$n) * 100
+    # freq$id <- as.numeric(as.character(freq$path))
+    # links <- left_join(links, freq, by="id")
+    # 
+    freq <- freq[freq$path %in% as.factor(1:37),]
+    freq$f <- freq$n 
+    freq$id <- as.numeric(as.character(freq$path))
+    links <- left_join(links, freq, by="id")
+    
+    net <- graph_from_data_frame(d=links, vertices=nodes, directed=T)
+    ecolors <- c("mediumvioletred", "gray75", "gray45", "cornflowerblue", "mediumaquamarine")
+    alphaecolors <- alpha(ecolors, 0.6)
+    E(net)$color <- ifelse(!is.na(E(net)$f), alphaecolors[as.factor(E(net)$type)], alpha("white", 0))
+    E(net)$width <- E(net)$f
+    E(net)$weight <- E(net)$f
+    E(net)$label <- ifelse(E(net)$f>3, paste0(round(E(net)$f, 0), "%"), NA)
+    E(net)$label.color <- ifelse(!is.na(E(net)$f), ecolors[as.factor(E(net)$type)], alpha("white", 0))
+    
+    vcolors <- c("tomato", "orange", "black")
+    vsizes <- c(4, 2, 1)
+    V(net)$label <- V(net)$concepts
+    V(net)$color <- vcolors[as.factor(V(net)$type)]
+    V(net)$size <- vsizes[as.factor(V(net)$type)]*5
+    V(net)$label.cex <- sqrt(vsizes[as.factor(V(net)$type)]) / 2
+    V(net)$label.degree <- c(pi,2*pi, -1.5, -1.5, pi/2, pi/2, pi/2)
+    
+    V(net)$frame.color <- "white"
+    
+    
+    plot.igraph2(net, edge.arrow.size=.6, edge.curved=0.4, layout=l,
+                 vertex.label.dist=2,
+                 vertex.label.font=2, vertex.label.color="black",
+                 edge.label.cex=0.75,
+                 edge.label.font=2,
+                 main = pastetext
+    )
+    
+    if(legend == T){
+      legend(x=-1.5, y=-1.1, levels(as.factor(nodes$type)), pch=21,
+             col="white", pt.bg=vcolors, pt.cex=2, cex=.8, bty="n", ncol=1, title="Type of concept")
+      legend(x=0.5, y=-1.1, levels(as.factor(links$type)), pch=21,
+             col="white", pt.bg=alphaecolors, pt.cex=2, cex=.8, bty="n", ncol=1, title="Type of relation")
+    }
+  }
+   
+```
+
+Direction of causality
+
+```{r, warning=F, verbose=F}
+   
+   dt_list <- map(fdata$path, as.data.table)
+   dt <- as.data.frame(rbindlist(dt_list, fill = TRUE, idcol = T))
+   colnames(dt) <- c("ID", "path")
+   dt$path <- as.numeric(dt$path)
+   
+   itos <- c(13,2,14,3,15,4,
+             1,16,5,17,6)
+   stoi <- c(18,8,19,9,20,10,
+             7,21,11,22,12)
+   mtom <- 23:37
+     
+     i_dir <- data.frame()
+     
+  for(i in 1:80){
+    paths <- dt |>
+      filter(ID == i)
+    i_dir[i,"ItoS"] <- ifelse("TRUE" %in% (paths$path %in% itos), 1, 0)
+    i_dir[i,"StoI"] <- ifelse("TRUE" %in% (paths$path %in% stoi), 1, 0)
+    i_dir[i,"MtoM"] <- ifelse("TRUE" %in% (paths$path %in% mtom), 1, 0)
+  } 
+   
+fdata$ItoS <- i_dir$ItoS
+fdata$StoI <- i_dir$StoI
+fdata$MtoM <- i_dir$MtoM
+   
+directions <- fdata[fdata$CorePaper==0,c("ID","ItoS", "StoI", "MtoM")]
+xdir <- list(
+  IneqToSeg = unlist(as.list(directions[directions$ItoS == 1,"ID"])), 
+  SegToIneq = unlist(as.list(directions[directions$StoI == 1,"ID"])), 
+  MedToMed = unlist(as.list(directions[directions$MtoM == 1,"ID"])))
+
+direction_core <- fdata[fdata$CorePaper==1,c("ID","ItoS", "StoI", "MtoM")]
+xdircore <- list(
+  IneqToSeg = unlist(as.list(direction_core[direction_core$ItoS == 1,"ID"])), 
+  SegToIneq = unlist(as.list(direction_core[direction_core$StoI == 1,"ID"])), 
+  MedToMed = unlist(as.list(direction_core[direction_core$MtoM == 1,"ID"])))
+
+
+```
+
+
+Directionality
+
+```{r, warning=F, verbose=F}
+fishgraph(fdata, nodes, links, legend = F)
+  fishgraph(fdata, nodes, links, "core", legend = F)
+ 
+  ggVennDiagram(xdir, label_alpha = 0.4, edge_lty = 0.1, set_size = 3.7) +
+  ggplot2::scale_fill_gradient(low="white",high = "black")+
+  ggplot2::ggtitle("Direction of causality assumed", 
+                   subtitle = "Eligible papers: n=48") +
+  ggplot2::theme(legend.position='right', 
+                 legend.justification='right',
+                 legend.direction='vertical')
+
+ggVennDiagram(xdircore, label_alpha = 0.4, edge_lty = 0.1, set_size = 3.7) +
+  ggplot2::scale_fill_gradient(low="white",high = "black")+
+  ggplot2::ggtitle("Direction of causality assumed", 
+                   subtitle = "Eligible papers: n=32") +
+  ggplot2::theme(legend.position='right', 
+                 legend.justification='right',
+                 legend.direction='vertical')
+
+
+  
+```
+
+
+
+Actors' wordcloud (Appendix H)
+
+```{r, warning=F, verbose=F}
+
+answerWordcloud <- function(data, variableName,  core = F, seednb = 123){
+  if(core == T){
+    data <- data %>% 
+      filter(CorePaper == 1)
+  }
+  objectList <- map(data[[variableName]], as.data.table)
+  allobjects <- as.data.frame(rbindlist(objectList, fill = TRUE, idcol = T))
+  colnames(allobjects) <- c("ID", "var")
+  words <- allobjects %>% 
+    count(var, sort=TRUE) %>% 
+    filter(var != "NA")
+  
+  set.seed(seednb) # for reproducibility 
+  wordcloud(words = words$var, freq = words$n, min.freq = 1,
+            max.words=200, random.order=FALSE, rot.per=0.35,
+            colors=brewer.pal(8, "Paired"))
+}
+
+descdata <- fdata %>%
+  mutate(actors = strsplit(`Actors involved (separated by ";")`, "; ")) 
+
+```
+
+Wordcloud of actors (Appendix H)
+
+```{r, warning=F, verbose=F}
+answerWordcloud(descdata, "actors")
+answerWordcloud(descdata,  core=T, "actors")
+
+```
+
+Estimated coefficients (Appendix I)
+
+```{r, warning=F, verbose=F}
+
+quant_summary_coeff <- read.csv("data/quant_summary_coeff.csv") |>
+  mutate(low = Coeff - `Standard.Error`,
+         high = Coeff + `Standard.Error`,
+         `Comparable\nspecifications?` = ifelse(Ref %in% c("Reardon & Bischoff, 2011","Mutgan & Mijs, 2023", "Simpson et al., 2023"), "yes", "no")) |>
+  mutate(Reference = factor(Ref, levels = c("Mutgan & Mijs, 2023", "Simpson et al., 2023","Hu & Liang, 2022", "Owens, 2016","Reardon & Bischoff, 2011","Watson, 2009", "Telles, 1995"))) 
+
+
+
+ggplot(quant_summary_coeff, aes(x = Reference, 
+                                colour = `Comparable\nspecifications?`,
+                                y = Coeff)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = low, ymax = high), width = 0.2)+
+  scale_colour_manual(values=c("aquamarine3","orange"))+
+  geom_hline(yintercept=0, colour = "black") +
+  ylab("Estimated values of coefficient in the study")+
+  coord_flip()
+
+```

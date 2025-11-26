@@ -1,6 +1,6 @@
 # Economic inequality and economic segregation: a systematic review of causal pathways
 
-Companion notebook of the article: "Economic inequality and economic segregation: a systematic review of causal pathways" by Clémentine Cottineau-Mugadza within the ERC project SEGUE.
+Companion notebook of the article: Clémentine Cottineau-Mugadza, Economic inequality and economic segregation: a systematic review of causal pathways, Social Forces, 2025; soaf195, https://doi.org/10.1093/sf/soaf195 
 
 [https://www.erc-segue.nl/SystematicLiteratureReview/SLR_inequality_segregation.html](https://www.erc-segue.nl/SystematicLiteratureReview/SLR_inequality_segregation.html)
 
